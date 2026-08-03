@@ -35,7 +35,7 @@ class SentimentResult:
 class SentimentService:
     def __init__(self, repo_id: str = FINBERT_REPO_ID):
         self.repo_id = repo_id
-        self.client = InferenceClient(token=HF_TOKEN)
+        self.client = InferenceClient(token=HF_TOKEN, provider="hf-inference")
 
     def _classify(self, text: str) -> tuple[str, float]:
         results = self.client.text_classification(text, model=self.repo_id)
