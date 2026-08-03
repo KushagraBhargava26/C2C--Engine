@@ -1,14 +1,24 @@
 """
-FinBERT sentiment wrapper -- calls Hugging Face's hosted Inference API via
-the official huggingface_hub client, instead of running the model locally.
-This keeps this service's own memory footprint small enough for free-tier
-hosting: no local torch/transformers runtime, no model weights held in
-this process's RAM.
+FinBERT sentiment wrapper -- runs local ONNX inference (quantized INT8)
+using onnxruntime directly, with the lightweight `tokenizers` library
+instead of `transformers.AutoTokenizer`.
 
-Using InferenceClient (rather than hand-built HTTP requests to a specific
-endpoint URL) matters here: Hugging Face has been actively migrating its
-serverless inference routing, and the client library tracks that so we
-don't have to hardcode a URL that might change again.
+Deliberately avoids importing `transformers` or `torch` at runtime: this
+process only needs to run two small quantized ONNX graphs, and pulling in
+the full transformers/torch stack just for tokenization defeats the whole
+point of the ONNX conversion (it's what was keeping memory high even
+after switching inference itself to onnxruntime).
+
+Two separate ONNX exports are used because a single export can't expose
+both classification logits and raw hidden states simultaneously:
+  - embedding/model_int8.onnx      -> feature-extraction export, gives
+                                       last_hidden_state (for the 768-dim
+                                       CLS embedding fed into RiskService)
+  - classification/model_int8.onnx -> text-classification export, gives
+                                       logits (for sentiment label/confidence)
+
+Both are quantized INT8, ~110MB each, downloaded once at startup from
+Kushhhie/c2c-finbert-onnx and cached locally by huggingface_hub.
 
 Interface matches what app/routers/analyze.py expects:
   - analyze(text) -> SentimentResult (single)
@@ -19,10 +29,13 @@ import os
 from dataclasses import dataclass
 
 import numpy as np
-from huggingface_hub import InferenceClient
+import onnxruntime as ort
+from huggingface_hub import hf_hub_download
+from tokenizers import Tokenizer
 
-FINBERT_REPO_ID = os.getenv("FINBERT_REPO_ID", "Lakshya-Sahu47/c2c-finbert-risk")
-HF_TOKEN = os.getenv("HF_TOKEN")
+ONNX_REPO_ID = os.getenv("ONNX_REPO_ID", "Kushhhie/c2c-finbert-onnx")
+
+ID2LABEL = {0: "positive", 1: "negative", 2: "neutral"}
 
 
 @dataclass
@@ -33,26 +46,64 @@ class SentimentResult:
 
 
 class SentimentService:
-    def __init__(self, repo_id: str = FINBERT_REPO_ID):
+    def __init__(self, repo_id: str = ONNX_REPO_ID):
         self.repo_id = repo_id
-        self.client = InferenceClient(token=HF_TOKEN, provider="hf-inference")
 
-    def _classify(self, text: str) -> tuple[str, float]:
-        results = self.client.text_classification(text, model=self.repo_id)
-        # results is a list of {"label": ..., "score": ...}, sorted by score
-        # already, but take the max explicitly to not depend on that.
-        top = max(results, key=lambda r: r.score)
-        return top.label.upper(), float(top.score)
+        # tokenizer.json alone is enough for the fast Rust tokenizer --
+        # no need for vocab.txt/tokenizer_config.json/special_tokens_map.json,
+        # those are only needed by the slower transformers-based tokenizer.
+        tokenizer_path = hf_hub_download(repo_id=repo_id, filename="tokenizer.json")
+        self.tokenizer = Tokenizer.from_file(tokenizer_path)
 
-    def _embed(self, text: str) -> np.ndarray:
-        # feature_extraction returns token-level hidden states for a single
-        # input as a [tokens, hidden_dim] array -- CLS token is index 0.
-        vectors = self.client.feature_extraction(text, model=self.repo_id)
-        return np.array(vectors[0], dtype=np.float32)
+        embedding_model_path = hf_hub_download(repo_id=repo_id, filename="embedding/model_int8.onnx")
+        classification_model_path = hf_hub_download(repo_id=repo_id, filename="classification/model_int8.onnx")
+
+        # Single-threaded sessions: keeps onnxruntime's internal thread
+        # pool/arena overhead down on a memory-constrained free instance.
+        sess_options = ort.SessionOptions()
+        sess_options.intra_op_num_threads = 1
+        sess_options.inter_op_num_threads = 1
+
+        self.embedding_session = ort.InferenceSession(embedding_model_path, sess_options=sess_options)
+        self.classification_session = ort.InferenceSession(classification_model_path, sess_options=sess_options)
+
+    def _tokenize(self, text: str) -> dict:
+        encoding = self.tokenizer.encode(text)
+        input_ids = np.array([encoding.ids], dtype=np.int64)
+        attention_mask = np.array([encoding.attention_mask], dtype=np.int64)
+        # BERT-family models expect token_type_ids even for single-sequence
+        # input -- all zeros is correct here (no second segment).
+        token_type_ids = np.zeros_like(input_ids)
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "token_type_ids": token_type_ids,
+        }
+
+    def _classify(self, onnx_inputs: dict) -> tuple[str, float]:
+        input_names = [i.name for i in self.classification_session.get_inputs()]
+        filtered_inputs = {k: v for k, v in onnx_inputs.items() if k in input_names}
+        outputs = self.classification_session.run(None, filtered_inputs)
+        logits = outputs[0]
+
+        probs = np.exp(logits) / np.exp(logits).sum(axis=-1, keepdims=True)
+        pred_idx = int(np.argmax(probs, axis=-1)[0])
+        label = ID2LABEL[pred_idx].upper()
+        confidence = float(probs[0][pred_idx])
+        return label, confidence
+
+    def _embed(self, onnx_inputs: dict) -> np.ndarray:
+        input_names = [i.name for i in self.embedding_session.get_inputs()]
+        filtered_inputs = {k: v for k, v in onnx_inputs.items() if k in input_names}
+        outputs = self.embedding_session.run(None, filtered_inputs)
+        last_hidden_state = outputs[0]
+        cls_embedding = last_hidden_state[:, 0, :][0]
+        return cls_embedding.astype(np.float32)
 
     def analyze(self, text: str) -> SentimentResult:
-        label, confidence = self._classify(text)
-        embedding = self._embed(text)
+        onnx_inputs = self._tokenize(text)
+        label, confidence = self._classify(onnx_inputs)
+        embedding = self._embed(onnx_inputs)
         return SentimentResult(label=label, confidence=confidence, embedding=embedding)
 
     def analyze_batch(self, texts: list[str]) -> list[SentimentResult]:

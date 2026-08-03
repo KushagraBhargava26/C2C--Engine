@@ -22,18 +22,24 @@ logger = logging.getLogger("c2c_brain")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Model warm-up on startup (roadmap stretch goal) instead of on first
-    # request — avoids a slow first call during the live demo.
+    # request -- avoids a slow first call during the live demo.
     logger.info("Loading FinBERT + risk classifier...")
     app.state.sentiment_service = SentimentService()
     app.state.risk_service = RiskService()
     logger.info("Models loaded. Ready to serve.")
+
+    import psutil
+    process = psutil.Process(os.getpid())
+    mem_mb = process.memory_info().rss / (1024 * 1024)
+    logger.info(f"Memory after model load: {mem_mb:.1f} MB")
+
     yield
     app.state.sentiment_service = None
     app.state.risk_service = None
 
 
 app = FastAPI(
-    title="C2C Brain — Sentiment & Risk Analysis",
+    title="C2C Brain -- Sentiment & Risk Analysis",
     version="1.0.0",
     lifespan=lifespan,
 )
