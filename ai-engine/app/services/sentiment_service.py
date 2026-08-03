@@ -1,9 +1,13 @@
 """
-FinBERT sentiment wrapper.
+FinBERT sentiment wrapper -- calls Hugging Face's hosted Inference API
+instead of running the model locally. This keeps this service's own
+memory footprint small enough for free-tier hosting: no local torch or
+transformers runtime, no model weights held in this process's RAM.
 
-Loads tokenizer + model straight from the Hugging Face repo (public repo,
-so no token needed). transformers handles the download + local caching
-automatically -- no manual file management required.
+Two HTTP calls per request, since one endpoint call doesn't give us both:
+  1. text-classification  -> sentiment label + confidence
+  2. feature-extraction   -> hidden states, from which we take the CLS
+     token (index 0) as the embedding the risk classifier expects.
 
 Interface matches what app/routers/analyze.py expects:
   - analyze(text) -> SentimentResult (single)
@@ -11,14 +15,22 @@ Interface matches what app/routers/analyze.py expects:
 """
 
 import os
+import time
 from dataclasses import dataclass
 
 import numpy as np
-import torch
-import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import requests
 
 FINBERT_REPO_ID = os.getenv("FINBERT_REPO_ID", "Lakshya-Sahu47/c2c-finbert-risk")
+HF_TOKEN = os.getenv("HF_TOKEN")  # required in practice -- unauthenticated
+                                   # calls are heavily rate-limited and slow
+
+HF_API_BASE = "https://api-inference.huggingface.co/models"
+_HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+
+_MAX_RETRIES = 6
+_RETRY_WAIT_SECONDS = 5  # a cold model on the free serverless tier can take
+                          # 20-30s to spin up; it replies 503 while loading
 
 
 @dataclass
@@ -28,67 +40,50 @@ class SentimentResult:
     embedding: np.ndarray
 
 
+def _post_with_retries(url: str, payload: dict) -> requests.Response:
+    response = None
+    for _ in range(_MAX_RETRIES):
+        response = requests.post(url, headers=_HEADERS, json=payload, timeout=30)
+        if response.status_code != 503:
+            return response
+        time.sleep(_RETRY_WAIT_SECONDS)
+    return response
+
+
 class SentimentService:
     def __init__(self, repo_id: str = FINBERT_REPO_ID):
-        # Force CPU + single-threaded: this runs on memory-constrained
-        # free-tier hosting, not a GPU box.
-        self.device = torch.device("cpu")
-        torch.set_num_threads(1)
+        self.repo_id = repo_id
+        self.api_url = f"{HF_API_BASE}/{repo_id}"
 
-        self.tokenizer = AutoTokenizer.from_pretrained(repo_id)
-        # Loading directly in bfloat16 means the full float32 weights are
-        # never materialized in memory at all (unlike post-hoc quantization,
-        # which briefly holds both the fp32 original AND the quantized copy
-        # at once -- a bigger peak, not a smaller one). This halves
-        # steady-state weight memory vs float32.
-        self.model = AutoModelForSequenceClassification.from_pretrained(
-            repo_id, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True
+    def _classify(self, text: str) -> tuple[str, float]:
+        response = _post_with_retries(
+            self.api_url, {"inputs": text, "options": {"wait_for_model": True}}
         )
-        self.model.to(self.device)
-        self.model.eval()
+        response.raise_for_status()
+        data = response.json()
+        scores = data[0] if isinstance(data, list) and isinstance(data[0], list) else data
+        top = max(scores, key=lambda s: s["score"])
+        return top["label"].upper(), float(top["score"])
 
-        # Use the model's own label mapping -- never hardcode label order.
-        self.id2label = self.model.config.id2label
-
-    def _predict_batch(self, texts: list[str]) -> list[SentimentResult]:
-        inputs = self.tokenizer(
-            texts, return_tensors="pt", truncation=True, padding=True, max_length=64,
-        ).to(self.device)
-
-        with torch.no_grad():
-            outputs = self.model(**inputs, output_hidden_states=True)
-
-        probs = F.softmax(outputs.logits.float(), dim=-1)
-        # numpy has no native bfloat16 dtype -- cast back to float32 first.
-        cls_embeddings = outputs.hidden_states[-1][:, 0, :].to(torch.float32).cpu().numpy()
-
-    def _predict_batch(self, texts: list[str]) -> list[SentimentResult]:
-        inputs = self.tokenizer(
-            texts, return_tensors="pt", truncation=True, padding=True, max_length=64,
-        ).to(self.device)
-
-        with torch.no_grad():
-            outputs = self.model(**inputs, output_hidden_states=True)
-
-        probs = F.softmax(outputs.logits, dim=-1)
-        cls_embeddings = outputs.hidden_states[-1][:, 0, :].cpu().numpy()
-
-        results = []
-        for i in range(len(texts)):
-            top_idx = int(torch.argmax(probs[i]).item())
-            label = self.id2label[top_idx].upper()
-            confidence = float(probs[i][top_idx].item())
-            results.append(
-                SentimentResult(
-                    label=label,
-                    confidence=confidence,
-                    embedding=cls_embeddings[i],
-                )
-            )
-        return results
+    def _embed(self, text: str) -> np.ndarray:
+        response = _post_with_retries(
+            self.api_url,
+            {
+                "inputs": text,
+                "options": {"wait_for_model": True},
+                "parameters": {"pooling": "none"},
+            },
+        )
+        response.raise_for_status()
+        vectors = response.json()
+        # Shape for a single input: [tokens, hidden_dim] -- CLS token is index 0.
+        cls_vector = np.array(vectors[0], dtype=np.float32)
+        return cls_vector
 
     def analyze(self, text: str) -> SentimentResult:
-        return self._predict_batch([text])[0]
+        label, confidence = self._classify(text)
+        embedding = self._embed(text)
+        return SentimentResult(label=label, confidence=confidence, embedding=embedding)
 
     def analyze_batch(self, texts: list[str]) -> list[SentimentResult]:
-        return self._predict_batch(texts)
+        return [self.analyze(text) for text in texts]
