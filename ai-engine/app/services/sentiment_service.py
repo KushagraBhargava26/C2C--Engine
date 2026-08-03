@@ -30,12 +30,25 @@ class SentimentResult:
 
 class SentimentService:
     def __init__(self, repo_id: str = FINBERT_REPO_ID):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Force CPU + single-threaded: this runs on memory-constrained
+        # free-tier hosting, not a GPU box.
+        self.device = torch.device("cpu")
+        torch.set_num_threads(1)
 
         self.tokenizer = AutoTokenizer.from_pretrained(repo_id)
-        self.model = AutoModelForSequenceClassification.from_pretrained(repo_id)
+        # low_cpu_mem_usage avoids briefly holding two copies of the
+        # weights in RAM during load.
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            repo_id, low_cpu_mem_usage=True
+        )
         self.model.to(self.device)
         self.model.eval()
+
+        # Dynamic int8 quantization cuts the model's weight memory ~4x
+        # vs full float32 -- needed to fit inside a 512MB free instance.
+        self.model = torch.quantization.quantize_dynamic(
+            self.model, {torch.nn.Linear}, dtype=torch.qint8
+        )
 
         # Use the model's own label mapping -- never hardcode label order.
         self.id2label = self.model.config.id2label
