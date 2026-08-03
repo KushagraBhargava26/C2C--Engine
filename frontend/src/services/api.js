@@ -10,7 +10,7 @@ import { getMockCountryDetail } from "../data/mockCountries.js";
 // Change this to false once your friend's Spring Boot endpoints are live.
 // This is the ONE line the whole app depends on for the mock -> real swap.
 const USE_MOCK = false;
-const BASE_URL = "http://localhost:8080";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
 
 const client = axios.create({
   baseURL: BASE_URL,
