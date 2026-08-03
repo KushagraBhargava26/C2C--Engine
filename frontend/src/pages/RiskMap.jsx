@@ -16,6 +16,15 @@ function CountryDetailPanel({ detail, onClose }) {
     );
   }
 
+  if (detail.error) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center rounded-lg border border-steel bg-ink-soft p-6 text-center gap-2">
+        <p className="font-mono text-xs uppercase tracking-widest text-parchment-faint">No risk data available for {detail.region}</p>
+        <button onClick={onClose} className="text-xs text-parchment-dim underline">Back</button>
+      </div>
+    );
+  }
+
   const style = riskStyle(detail.riskLevel);
 
   return (
@@ -72,11 +81,15 @@ export default function RiskMap() {
   const [selected, setSelected] = useState(null);
 
   async function handleCountryClick(geo) {
-    const alpha2 = alpha2ForNumericId(geo.id);
-    if (!alpha2) return;
+  const alpha2 = alpha2ForNumericId(geo.id);
+  if (!alpha2) return;
+  try {
     const detail = await getCountryDetail(alpha2);
     setSelected(detail);
+  } catch (err) {
+    setSelected({ error: true, region: alpha2 });
   }
+}
 
   return (
     <div className="grid grid-cols-1 gap-5 p-8 lg:grid-cols-3">
