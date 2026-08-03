@@ -32,5 +32,8 @@ frontend/dist/
 frontend/.env
 
 .vscode/
-onnx_export/
-onnx_export_clf/
+onnx_export*/
+ai-engine/check_*.py
+ai-engine/export_*.py
+ai-engine/test_*.py
+ai-engine/upload_*.py
