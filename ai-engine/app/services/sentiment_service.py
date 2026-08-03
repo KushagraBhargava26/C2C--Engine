@@ -36,22 +36,31 @@ class SentimentService:
         torch.set_num_threads(1)
 
         self.tokenizer = AutoTokenizer.from_pretrained(repo_id)
-        # low_cpu_mem_usage avoids briefly holding two copies of the
-        # weights in RAM during load.
+        # Loading directly in bfloat16 means the full float32 weights are
+        # never materialized in memory at all (unlike post-hoc quantization,
+        # which briefly holds both the fp32 original AND the quantized copy
+        # at once -- a bigger peak, not a smaller one). This halves
+        # steady-state weight memory vs float32.
         self.model = AutoModelForSequenceClassification.from_pretrained(
-            repo_id, low_cpu_mem_usage=True
+            repo_id, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True
         )
         self.model.to(self.device)
         self.model.eval()
 
-        # Dynamic int8 quantization cuts the model's weight memory ~4x
-        # vs full float32 -- needed to fit inside a 512MB free instance.
-        self.model = torch.quantization.quantize_dynamic(
-            self.model, {torch.nn.Linear}, dtype=torch.qint8
-        )
-
         # Use the model's own label mapping -- never hardcode label order.
         self.id2label = self.model.config.id2label
+
+    def _predict_batch(self, texts: list[str]) -> list[SentimentResult]:
+        inputs = self.tokenizer(
+            texts, return_tensors="pt", truncation=True, padding=True, max_length=64,
+        ).to(self.device)
+
+        with torch.no_grad():
+            outputs = self.model(**inputs, output_hidden_states=True)
+
+        probs = F.softmax(outputs.logits.float(), dim=-1)
+        # numpy has no native bfloat16 dtype -- cast back to float32 first.
+        cls_embeddings = outputs.hidden_states[-1][:, 0, :].to(torch.float32).cpu().numpy()
 
     def _predict_batch(self, texts: list[str]) -> list[SentimentResult]:
         inputs = self.tokenizer(
