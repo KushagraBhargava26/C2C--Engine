@@ -49,6 +49,10 @@ public class IncidentService {
     }
 
     public IncidentResponseDTO processNewIncident(String incidentText, String sourceRegion) {
+        return processNewIncident(incidentText, sourceRegion, null);
+    }
+
+    public IncidentResponseDTO processNewIncident(String incidentText, String sourceRegion, String sourceUrl) {
         // Step 1: Call Python for sentiment/risk analysis
         PythonAnalysisRequest request = new PythonAnalysisRequest(
                 incidentText, sourceRegion, Instant.now().toString());
@@ -61,6 +65,7 @@ public class IncidentService {
         incident.setRiskLevel(IncidentEvent.RiskLevel.valueOf(analysis.getRiskLevel()));
         incident.setConfidenceScore(analysis.getConfidenceScore());
         incident.setCreatedAt(Instant.now());
+        incident.setSourceUrl(sourceUrl);
         IncidentEvent saved = incidentRepo.save(incident);
 
         // Step 3: Ensure the country exists (create if not)
@@ -73,6 +78,10 @@ public class IncidentService {
                 });
 
         return toDTO(saved);
+    }
+
+    public boolean isArticleAlreadyProcessed(String sourceUrl) {
+        return incidentRepo.existsBySourceUrl(sourceUrl);
     }
 
     public PagedIncidentResponseDTO getIncidents(Pageable pageable) {
