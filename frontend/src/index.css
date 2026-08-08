@@ -4,4 +4,34 @@
 
 body {
   @apply bg-ink text-parchment font-body antialiased;
+  margin: 0;
+  padding: 0;
+}
+
+html, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+@keyframes kenburns {
+  0% { transform: scale(1) translateX(0); }
+  100% { transform: scale(1.08) translateX(-1%); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+/* Hides the scrollbar visually while keeping the element scrollable
+   (useful for full-bleed hero sections where a visible scrollbar
+   breaks the edge-to-edge look, but content can still overflow on
+   short/zoomed-in viewports). */
+.no-scrollbar {
+  scrollbar-width: none;      /* Firefox */
+  -ms-overflow-style: none;   /* old Edge/IE */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;              /* Chrome, Safari, new Edge */
 }

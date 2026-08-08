@@ -1,12 +1,12 @@
 import { NavLink } from "react-router-dom";
 
 const NAV_ITEMS = [
-  { to: "/", label: "Dashboard", glyph: "◧" },
-  { to: "/global-feed", label: "Global Feed", glyph: "≡" },
-  { to: "/risk-map", label: "Risk Map", glyph: "◎" },
-  { to: "/portfolio", label: "Portfolio Exposure", glyph: "▦" },
-  { to: "/knowledge-graph", label: "Knowledge Graph", glyph: "◈" },
-  { to: "/analytics", label: "Analytics", glyph: "▤" },
+  { to: "/dashboard", label: "Dashboard", glyph: "◧" },
+  { to: "/dashboard/global-feed", label: "Global Feed", glyph: "≡" },
+  { to: "/dashboard/risk-map", label: "Risk Map", glyph: "◎" },
+  { to: "/dashboard/portfolio", label: "Portfolio Exposure", glyph: "▦" },
+  { to: "/dashboard/knowledge-graph", label: "Knowledge Graph", glyph: "◈" },
+  { to: "/dashboard/analytics", label: "Analytics", glyph: "▤" },
 ];
 
 export default function Sidebar() {
@@ -26,7 +26,7 @@ export default function Sidebar() {
           <NavLink
             key={item.to}
             to={item.to}
-            end={item.to === "/"}
+            end={item.to === "/dashboard"}
             className={({ isActive }) =>
               `flex items-center gap-3 rounded-md px-3 py-2 font-body text-sm transition-colors ${
                 isActive

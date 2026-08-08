@@ -29,6 +29,10 @@ export default {
           high: "#C1562E",
           critical: "#A8324B",
         },
+        signal: {
+          a: "#34D399",
+          b: "#22B8CF",
+        },
       },
       fontFamily: {
         display: ["'Space Grotesk'", "sans-serif"],
