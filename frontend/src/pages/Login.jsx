@@ -1,16 +1,65 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import earthHero from "../assets/earth-hero.jpg";
+import { login, register, forgotPassword, googleAuth } from "../services/api.js";
+import { saveSession } from "../services/auth.js";
+import GoogleSignInButton from "../components/GoogleSignInButton.jsx";
 
 export default function Login() {
   const [showPw, setShowPw] = useState(false);
+  const [mode, setMode] = useState("login"); // "login" | "register" | "forgot"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [forgotResult, setForgotResult] = useState(null); // { message, devResetLink? }
   const navigate = useNavigate();
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
-    // TODO: wire up to the real auth endpoint once the Spring Boot
-    // backend exposes /api/auth/login. For now this just goes to the dashboard.
-    navigate("/dashboard");
+    setError(null);
+
+    if (mode === "forgot") {
+      setSubmitting(true);
+      try {
+        const data = await forgotPassword({ email });
+        setForgotResult(data);
+      } catch (err) {
+        setError(err?.error || err?.message || "Something went wrong. Try again.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const action = mode === "login" ? login : register;
+      const data = await action({ email, password });
+      saveSession(data);
+      navigate("/dashboard");
+    } catch (err) {
+      setError(err?.error || err?.message || "Something went wrong. Try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleGoogleCredential(idToken) {
+    setError(null);
+    try {
+      const data = await googleAuth({ idToken });
+      saveSession(data);
+      navigate("/dashboard");
+    } catch (err) {
+      setError(err?.error || err?.message || "Google sign-in failed. Try again.");
+    }
+  }
+
+  function switchMode(next) {
+    setMode(next);
+    setError(null);
+    setForgotResult(null);
   }
 
   return (
@@ -59,11 +108,85 @@ export default function Login() {
             Back to home
           </Link>
 
-          <h2 className="mb-2 font-display text-[26px] font-semibold">Welcome back</h2>
+          <h2 className="mb-2 font-display text-[26px] font-semibold">
+            {mode === "login" && "Welcome back"}
+            {mode === "register" && "Create your account"}
+            {mode === "forgot" && "Reset your password"}
+          </h2>
           <p className="mb-8 text-[13.5px] text-parchment-dim">
-            Sign in to access your risk intelligence dashboard.
+            {mode === "login" && "Sign in to access your risk intelligence dashboard."}
+            {mode === "register" && "Set up access to your risk intelligence dashboard."}
+            {mode === "forgot" && "Enter your email and we'll generate a reset link."}
           </p>
 
+          {error && (
+            <div className="mb-5 rounded-lg border border-risk-critical/40 bg-risk-critical/10 px-3.5 py-2.5 text-[12.5px] text-risk-critical">
+              {error}
+            </div>
+          )}
+
+          {forgotResult && (
+            <div className="mb-5 rounded-lg border border-signal-a/40 bg-signal-a/10 px-3.5 py-3 text-[12.5px] text-parchment">
+              <p className="mb-2">{forgotResult.message}</p>
+              {forgotResult.devResetLink && (
+                <>
+                  <p className="mb-1.5 text-parchment-faint">
+                    No email service is wired up yet, so here's the link directly (test mode):
+                  </p>
+                  <Link
+                    to={forgotResult.devResetLink}
+                    className="break-all font-mono text-signal-a underline"
+                  >
+                    {forgotResult.devResetLink}
+                  </Link>
+                </>
+              )}
+            </div>
+          )}
+
+          {mode === "forgot" ? (
+            <form onSubmit={handleSubmit}>
+              <div className="mb-5">
+                <label className="mb-1.5 block text-[11.5px] font-medium text-parchment-faint">
+                  Email
+                </label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-parchment-faint">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <rect x="3" y="5" width="18" height="14" rx="2" />
+                      <path d="m3 7 9 6 9-6" />
+                    </svg>
+                  </span>
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="Enter your email"
+                    className="w-full rounded-lg border border-steel bg-ink-soft py-3 pl-10 pr-3.5 text-[13.5px] text-parchment transition-colors focus:border-signal-a focus:bg-ink-raised focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="w-full rounded-lg bg-gradient-to-r from-signal-a to-signal-b py-3 text-sm font-semibold text-[#06140F] shadow-[0_8px_22px_-8px_rgba(52,211,153,0.45)] transition-transform hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {submitting ? "Please wait…" : "Send reset link"}
+              </button>
+
+              <div className="mt-5 text-center text-[12.5px] text-parchment-faint">
+                <button
+                  type="button"
+                  onClick={() => switchMode("login")}
+                  className="font-medium text-signal-a hover:underline"
+                >
+                  Back to login
+                </button>
+              </div>
+            </form>
+          ) : (
           <form onSubmit={handleSubmit}>
             <div className="mb-4">
               <label className="mb-1.5 block text-[11.5px] font-medium text-parchment-faint">
@@ -79,6 +202,8 @@ export default function Login() {
                 <input
                   type="email"
                   required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   placeholder="Enter your email"
                   className="w-full rounded-lg border border-steel bg-ink-soft py-3 pl-10 pr-3.5 text-[13.5px] text-parchment transition-colors focus:border-signal-a focus:bg-ink-raised focus:outline-none"
                 />
@@ -99,7 +224,10 @@ export default function Login() {
                 <input
                   type={showPw ? "text" : "password"}
                   required
-                  placeholder="Enter your password"
+                  minLength={mode === "register" ? 8 : undefined}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={mode === "register" ? "At least 8 characters" : "Enter your password"}
                   className="w-full rounded-lg border border-steel bg-ink-soft py-3 pl-10 pr-10 text-[13.5px] text-parchment transition-colors focus:border-signal-a focus:bg-ink-raised focus:outline-none"
                 />
                 <button
@@ -115,22 +243,57 @@ export default function Login() {
               </div>
             </div>
 
-            <div className="mb-6 mt-4.5 flex items-center justify-between">
-              <label className="flex items-center gap-2 text-[12.5px] text-parchment-dim">
-                <input type="checkbox" className="h-3.5 w-3.5 accent-signal-a" />
-                Remember me
-              </label>
-              <a href="#forgot" className="text-[12.5px] font-medium text-signal-a hover:underline">
-                Forgot password?
-              </a>
-            </div>
+            {mode === "login" ? (
+              <div className="mb-6 mt-4.5 flex items-center justify-between">
+                <label className="flex items-center gap-2 text-[12.5px] text-parchment-dim">
+                  <input type="checkbox" className="h-3.5 w-3.5 accent-signal-a" />
+                  Remember me
+                </label>
+                <button
+                  type="button"
+                  onClick={() => switchMode("forgot")}
+                  className="text-[12.5px] font-medium text-signal-a hover:underline"
+                >
+                  Forgot password?
+                </button>
+              </div>
+            ) : (
+              <div className="mb-6 mt-4.5" />
+            )}
 
             <button
               type="submit"
-              className="w-full rounded-lg bg-gradient-to-r from-signal-a to-signal-b py-3 text-sm font-semibold text-[#06140F] shadow-[0_8px_22px_-8px_rgba(52,211,153,0.45)] transition-transform hover:-translate-y-px"
+              disabled={submitting}
+              className="w-full rounded-lg bg-gradient-to-r from-signal-a to-signal-b py-3 text-sm font-semibold text-[#06140F] shadow-[0_8px_22px_-8px_rgba(52,211,153,0.45)] transition-transform hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Login
+              {submitting ? "Please wait…" : mode === "login" ? "Login" : "Create account"}
             </button>
+
+            <div className="mt-5 text-center text-[12.5px] text-parchment-faint">
+              {mode === "login" ? (
+                <>
+                  Don&apos;t have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={() => switchMode("register")}
+                    className="font-medium text-signal-a hover:underline"
+                  >
+                    Create one
+                  </button>
+                </>
+              ) : (
+                <>
+                  Already have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={() => switchMode("login")}
+                    className="font-medium text-signal-a hover:underline"
+                  >
+                    Log in
+                  </button>
+                </>
+              )}
+            </div>
 
             <div className="my-6 flex items-center gap-3">
               <div className="h-px flex-1 bg-steel" />
@@ -138,18 +301,7 @@ export default function Login() {
               <div className="h-px flex-1 bg-steel" />
             </div>
 
-            <button
-              type="button"
-              className="flex w-full items-center justify-center gap-2.5 rounded-lg border border-steel bg-ink-soft py-3 text-[13.5px] font-medium text-parchment transition-colors hover:border-steel-light hover:bg-ink-raised"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.99.66-2.25 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.85A11 11 0 0 0 12 23z" />
-                <path fill="#FBBC05" d="M5.84 14.1A6.6 6.6 0 0 1 5.5 12c0-.73.13-1.44.34-2.1V7.05H2.18A11 11 0 0 0 1 12c0 1.77.43 3.45 1.18 4.95l3.66-2.85z" />
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1a11 11 0 0 0-9.82 6.05l3.66 2.85C6.71 7.31 9.14 5.38 12 5.38z" />
-              </svg>
-              Continue with Google
-            </button>
+            <GoogleSignInButton onCredential={handleGoogleCredential} onError={setError} />
 
             <div className="mt-6 flex items-center justify-center gap-1.5 text-[11px] text-parchment-faint">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -159,6 +311,7 @@ export default function Login() {
               Your data is encrypted and never shared
             </div>
           </form>
+          )}
         </div>
       </div>
     </div>

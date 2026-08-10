@@ -17,6 +17,16 @@ const client = axios.create({
   timeout: 8000,
 });
 
+// Attach the JWT (once logged in) to every outgoing request automatically,
+// since /api/v1/** now requires auth on the backend.
+client.interceptors.request.use((config) => {
+  const token = localStorage.getItem("c2c_token");
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 // Simulates network latency in mock mode, so loading states are actually
 // visible and testable before the real backend exists.
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -161,3 +171,71 @@ export async function getIncidentVolume() {
 }
 
 export const apiConfig = { USE_MOCK, BASE_URL };
+
+// --- Auth ---------------------------------------------------------------
+
+/**
+ * POST /api/auth/login
+ * Returns { token, email, expiresIn } on success.
+ * Throws the normalized backend error body on failure (e.g. { error: "Invalid email or password." }).
+ */
+export async function login({ email, password }) {
+  try {
+    const { data } = await client.post("/api/auth/login", { email, password });
+    return data;
+  } catch (err) {
+    throw normalizeError(err);
+  }
+}
+
+/**
+ * POST /api/auth/register
+ * Returns { token, email, expiresIn } on success.
+ */
+export async function register({ email, password }) {
+  try {
+    const { data } = await client.post("/api/auth/register", { email, password });
+    return data;
+  } catch (err) {
+    throw normalizeError(err);
+  }
+}
+
+/**
+ * POST /api/auth/forgot-password
+ * In test mode (no email service configured yet) the backend hands back
+ * devResetLink directly instead of emailing it.
+ */
+export async function forgotPassword({ email }) {
+  try {
+    const { data } = await client.post("/api/auth/forgot-password", { email });
+    return data;
+  } catch (err) {
+    throw normalizeError(err);
+  }
+}
+
+/**
+ * POST /api/auth/reset-password
+ */
+export async function resetPassword({ token, newPassword }) {
+  try {
+    const { data } = await client.post("/api/auth/reset-password", { token, newPassword });
+    return data;
+  } catch (err) {
+    throw normalizeError(err);
+  }
+}
+
+/**
+ * POST /api/auth/google
+ * idToken is the credential Google's Sign-In button hands back client-side.
+ */
+export async function googleAuth({ idToken }) {
+  try {
+    const { data } = await client.post("/api/auth/google", { idToken });
+    return data;
+  } catch (err) {
+    throw normalizeError(err);
+  }
+}

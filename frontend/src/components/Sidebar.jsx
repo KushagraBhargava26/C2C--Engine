@@ -1,4 +1,5 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
+import { clearSession, getEmail } from "../services/auth.js";
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", glyph: "◧" },
@@ -10,6 +11,14 @@ const NAV_ITEMS = [
 ];
 
 export default function Sidebar() {
+  const navigate = useNavigate();
+  const email = getEmail();
+
+  function handleLogout() {
+    clearSession();
+    navigate("/login", { replace: true });
+  }
+
   return (
     <aside className="hidden w-56 shrink-0 flex-col border-r border-steel bg-ink-soft md:flex">
       <div className="flex h-16 items-center gap-2 border-b border-steel px-5">
@@ -42,6 +51,19 @@ export default function Sidebar() {
       </nav>
 
       <div className="border-t border-steel px-5 py-4">
+        {email && (
+          <div className="mb-3 flex items-center justify-between">
+            <p className="truncate text-xs text-parchment-dim" title={email}>
+              {email}
+            </p>
+            <button
+              onClick={handleLogout}
+              className="ml-2 shrink-0 font-mono text-[10px] uppercase tracking-widest text-parchment-faint transition-colors hover:text-risk-critical"
+            >
+              Log out
+            </button>
+          </div>
+        )}
         <p className="font-mono text-[10px] uppercase tracking-widest text-parchment-faint">
           Conflict → Currency
         </p>
