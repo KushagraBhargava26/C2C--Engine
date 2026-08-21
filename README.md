@@ -4,8 +4,6 @@
 
 C2C Engine ingests live geopolitical news, scores it for sentiment and risk using a fine-tuned FinBERT model, maps it against portfolio exposure, and surfaces it as real-time incidents, risk maps, and causal chains — all in one dashboard.
 
-Built solo, end to end: React frontend, Spring Boot backend, and a FastAPI/ONNX AI engine.
-
 [![Frontend](https://img.shields.io/badge/frontend-React%2019%20%2B%20Vite-149eca?logo=react&logoColor=white)](./frontend)
 [![Backend](https://img.shields.io/badge/backend-Spring%20Boot-6DB33F?logo=springboot&logoColor=white)](./backend)
 [![AI Engine](https://img.shields.io/badge/AI%20engine-FastAPI%20%2B%20ONNX-009688?logo=fastapi&logoColor=white)](./ai-engine)
